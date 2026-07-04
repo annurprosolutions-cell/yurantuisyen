@@ -98,8 +98,7 @@
         const SHEET_ID = '2PACX-1vTXZgRPcp3xfy3iOPQae01DZd5ODahZWkHwGucWCglxDAeFEXql_VgVVi2JcblgsLfPeLHq7bcuLWLY';
         
         // 2. APPS SCRIPT URL (UNTUK FUNGSI UPDATE/EDIT STATUS VERIFICATION)
-        // ** SILA MASUKKAN URL DEPLOYMENT APPS SCRIPT ANDA DI SINI **
-        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwsCfO1aYCXD_3sY3tn7j_C3nu5dHKfIm81YQjeG35o7cNT7dbFQ3tYAwGj1xlFK4uFOw/exec'; // Contoh: 'https://script.google.com/macros/s/XXX/exec'
+        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyVA_Fo5f0xTkcfsQOMbrNQwlQo49FYcuBdql6v_Fj2dJMMAcJTQdlh5hSRCTkV7P8qTQ/exec'; 
 
         // Tab 1: Maklumat Pelajar - GID: 0
         const URL_STUDENTS = `https://docs.google.com/spreadsheets/d/e/${SHEET_ID}/pub?gid=0&single=true&output=csv`;
@@ -166,7 +165,9 @@
 
         const ErrorScreen = ({ message, onRetry }) => (
             <div className="flex flex-col items-center justify-center h-screen bg-red-50 text-center p-4">
-                <div className="text-red-500 mb-4"><Icon name="alert-triangle" size={64} /></div>
+                <div className="text-red-500 mb-4">
+                    <Icon name="alert-triangle" size={64} />
+                </div>
                 <h2 className="text-2xl font-bold text-red-700 mb-2">Gagal Memuat Data</h2>
                 <p className="text-red-600 mb-6 max-w-md">{message}</p>
                 <button onClick={onRetry} className="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-full font-semibold transition shadow-lg">
@@ -200,30 +201,50 @@
             const [selectedStudent, setSelectedStudent] = useState(null);
             const [updatingStatus, setUpdatingStatus] = useState(null); 
             
-            // Database Export State
-            const [exportCols, setExportCols] = useState(EXPORT_COLUMNS.map(c => c.id));
+            // --- State untuk Tapis Jadual Transaksi ---
+            const [txFilters, setTxFilters] = useState({
+                date: '',
+                name: '',
+                type: 'Semua',
+                desc: '',
+                amount: '',
+                verification: 'Semua'
+            });
 
-            // Filters State
+            const [exportCols, setExportCols] = useState(EXPORT_COLUMNS.map(c => c.id));
             const [filters, setFilters] = useState({ 
                 search: '', 
                 class: 'Semua', 
                 month: 'Semua', 
-                status: 'Semua',
+                status: 'Semua', 
                 type: 'Semua' 
             });
 
-            // Fetch Data Function
+            // Helper function to parse dates correctly for sorting (DD/MM/YYYY HH:mm:ss)
+            const parseDateString = (dateStr) => {
+                if (!dateStr) return 0;
+                try {
+                    const [datePart, timePart] = dateStr.split(' ');
+                    if (!datePart) return 0;
+                    const [day, month, year] = datePart.split('/');
+                    const [hour, min, sec] = (timePart || '00:00:00').split(':');
+                    return new Date(year, month - 1, day, hour, min, sec).getTime();
+                } catch (e) {
+                    return 0; // Fallback if parsing fails
+                }
+            };
+
             const fetchData = async () => {
                 setLoading(true);
                 setError(null);
                 try {
                     const fetchCsv = (url) => new Promise((resolve, reject) => {
-                        Papa.parse(url, {
-                            download: true,
-                            header: true,
-                            skipEmptyLines: true,
-                            complete: (results) => resolve(results.data),
-                            error: (err) => reject(err)
+                        Papa.parse(url, { 
+                            download: true, 
+                            header: true, 
+                            skipEmptyLines: true, 
+                            complete: (r) => resolve(r.data), 
+                            error: (e) => reject(e) 
                         });
                     });
 
@@ -244,11 +265,12 @@
                     const cleanReg = cleanKeys(regRes).map(t => ({...t, _type: 'Pendaftaran'}));
 
                     const allTransactions = [...cleanMonthly, ...cleanReg];
-                    allTransactions.sort((a, b) => new Date(b.Timestamp) - new Date(a.Timestamp));
+                    
+                    // SORTING LOGIC: Newest to Oldest explicitly using Custom Date Parser
+                    allTransactions.sort((a, b) => parseDateString(b.Timestamp) - parseDateString(a.Timestamp));
 
                     setStudents(cleanStudents);
                     setTransactions(allTransactions);
-
                 } catch (err) {
                     console.error("CSV Error:", err);
                     setError("Gagal membaca data dari Google Sheet. Pastikan sheet 'Published to Web'.");
@@ -257,11 +279,10 @@
                 }
             };
 
-            useEffect(() => {
-                fetchData();
+            useEffect(() => { 
+                fetchData(); 
             }, []);
 
-            // --- STATUS UPDATE FUNCTION ---
             const updateStatus = async (tx, newStatus) => {
                 if (!APPS_SCRIPT_URL) {
                     alert("Sila tetapkan APPS_SCRIPT_URL dalam kod index.html dahulu untuk membolehkan fungsi Edit!");
@@ -274,14 +295,13 @@
                 try {
                     const payload = {
                         action: 'UPDATE_STATUS',
-                        sheetType: tx._type, // 'Bulanan' or 'Pendaftaran'
+                        sheetType: tx._type,
                         timestamp: tx.Timestamp,
                         ic: tx.IC || '',
                         nama: tx.NAMA,
                         newStatus: newStatus
                     };
 
-                    // Optimistic Update (Update UI immediately)
                     const updatedTransactions = transactions.map(t => {
                         if (t.Timestamp === tx.Timestamp && t.NAMA === tx.NAMA) {
                             return { ...t, VERIFICATION: newStatus };
@@ -290,40 +310,34 @@
                     });
                     setTransactions(updatedTransactions);
 
-                    // Send to backend
-                    const response = await fetch(APPS_SCRIPT_URL, {
-                        method: 'POST',
-                        body: JSON.stringify(payload)
+                    const response = await fetch(APPS_SCRIPT_URL, { 
+                        method: 'POST', 
+                        body: JSON.stringify(payload) 
                     });
-                    
                     const result = await response.json();
                     
                     if (result.result !== 'success') {
                         throw new Error(result.message || "Gagal kemas kini di server");
                     }
-
                     console.log("Status berjaya dikemaskini");
-
                 } catch (err) {
                     console.error("Kemas kini gagal:", err);
                     alert("Gagal mengemaskini status: " + err.message);
-                    fetchData(); // Reload asal untuk undo optimistic update
+                    fetchData(); 
                 } finally {
                     setUpdatingStatus(null);
                 }
             };
 
-            // --- DATA PROCESSING & LOGIC ---
             const studentData = useMemo(() => {
                 return students.map(student => {
                     const studentTxs = transactions.filter(t => t['IC'] === student['IC']);
-                    
                     const monthlyTxs = studentTxs.filter(t => t._type === 'Bulanan');
                     const regTxs = studentTxs.filter(t => t._type === 'Pendaftaran');
 
                     let balMonthly = 0;
                     if (monthlyTxs.length > 0) {
-                        const latest = monthlyTxs.sort((a, b) => new Date(b['Timestamp']) - new Date(a['Timestamp']))[0];
+                        const latest = monthlyTxs.sort((a, b) => parseDateString(b['Timestamp']) - parseDateString(a['Timestamp']))[0];
                         balMonthly = parseFloat((latest['BAKI'] || '0').replace(/[^0-9.-]+/g,""));
                     } else {
                         balMonthly = parseFloat((student['Yuran Bulanan'] || '0').replace(/[^0-9.-]+/g,""));
@@ -331,7 +345,7 @@
 
                     let balReg = 0;
                     if (regTxs.length > 0) {
-                         const latest = regTxs.sort((a, b) => new Date(b['Timestamp']) - new Date(a['Timestamp']))[0];
+                         const latest = regTxs.sort((a, b) => parseDateString(b['Timestamp']) - parseDateString(a['Timestamp']))[0];
                          balReg = parseFloat((latest['BAKI'] || '0').replace(/[^0-9.-]+/g,""));
                     } else {
                         balReg = parseFloat((student['Yuran Pendaftaran'] || '0').replace(/[^0-9.-]+/g,""));
@@ -361,7 +375,6 @@
                     const matchSearch = (s['Nama'] || '').toLowerCase().includes(filters.search.toLowerCase()) || 
                                         (s['IC'] || '').includes(filters.search);
                     const matchClass = filters.class === 'Semua' || s['Kelas'] === filters.class;
-                    
                     const matchMonth = filters.month === 'Semua' || s.transactions.some(t => t['BULAN'] === filters.month);
 
                     let matchStatus = true;
@@ -376,7 +389,21 @@
                 });
             }, [studentData, filters]);
 
-            // Statistics logic
+            // --- Logik Tapisan (Filter) Jadual Transaksi ---
+            const filteredTransactionsList = useMemo(() => {
+                return transactions.filter(tx => {
+                    const matchDate = (tx.Timestamp || '').toLowerCase().includes(txFilters.date.toLowerCase());
+                    const matchName = (tx.NAMA || '').toLowerCase().includes(txFilters.name.toLowerCase());
+                    const matchType = txFilters.type === 'Semua' || tx._type === txFilters.type;
+                    const matchDesc = (tx.BULAN || tx['JENIS YURAN'] || '').toLowerCase().includes(txFilters.desc.toLowerCase());
+                    const matchAmount = (tx['JUMLAH BAYARAN'] || '').toString().toLowerCase().includes(txFilters.amount.toLowerCase());
+                    const txStatus = tx['VERIFICATION'] || 'PENDING';
+                    const matchVer = txFilters.verification === 'Semua' || txStatus === txFilters.verification;
+
+                    return matchDate && matchName && matchType && matchDesc && matchAmount && matchVer;
+                });
+            }, [transactions, txFilters]);
+
             const stats = useMemo(() => {
                 const totalStudents = studentData.length;
                 const totalOutstanding = studentData.reduce((sum, student) => sum + (student.currentBalance > 0 ? student.currentBalance : 0), 0);
@@ -397,15 +424,8 @@
                 return { totalStudents, totalCollection, totalOutstanding, collectionByMonth };
             }, [studentData, transactions]);
 
-            const classes = useMemo(() => {
-                const cls = new Set(students.map(s => s['Kelas']).filter(Boolean));
-                return ['Semua', ...Array.from(cls)];
-            }, [students]);
-
-            const months = useMemo(() => {
-                const m = new Set(transactions.map(t => t['BULAN']).filter(Boolean));
-                return ['Semua', ...Array.from(m)];
-            }, [transactions]);
+            const classes = useMemo(() => ['Semua', ...Array.from(new Set(students.map(s => s['Kelas']).filter(Boolean)))], [students]);
+            const months = useMemo(() => ['Semua', ...Array.from(new Set(transactions.map(t => t['BULAN']).filter(Boolean)))], [transactions]);
 
             const formatRM = (val) => "RM " + (parseFloat(val) || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
             
@@ -420,7 +440,10 @@
 
             const sendWhatsAppReminder = (student) => {
                 const phone = student['No Tel Waris'];
-                if (!phone) { alert("Nombor telefon waris tiada."); return; }
+                if (!phone) { 
+                    alert("Nombor telefon waris tiada."); 
+                    return; 
+                }
                 let cleanPhone = phone.toString().replace(/[^0-9]/g, '');
                 if (cleanPhone.startsWith('0')) cleanPhone = '60' + cleanPhone.substring(1);
 
@@ -433,7 +456,6 @@
                 window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`, '_blank');
             };
 
-            // --- EXPORT FUNCTIONS (EXCEL/PDF) ---
             const toggleColumn = (id) => {
                 if (exportCols.includes(id)) {
                     setExportCols(exportCols.filter(col => col !== id));
@@ -468,7 +490,10 @@
 
             const downloadExcel = () => {
                 const data = generateExportData();
-                if (data.length === 0) { alert("Tiada data untuk dimuat turun."); return; }
+                if (data.length === 0) { 
+                    alert("Tiada data untuk dimuat turun."); 
+                    return; 
+                }
                 const ws = XLSX.utils.json_to_sheet(data);
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, ws, "Database Pelajar");
@@ -477,7 +502,10 @@
 
             const downloadPDF = () => {
                 const data = generateExportData();
-                if (data.length === 0) { alert("Tiada data untuk dimuat turun."); return; }
+                if (data.length === 0) { 
+                    alert("Tiada data untuk dimuat turun."); 
+                    return; 
+                }
                 const { jsPDF } = window.jspdf;
                 const doc = new jsPDF({ orientation: 'landscape' });
                 const headers = EXPORT_COLUMNS.filter(c => exportCols.includes(c.id)).map(c => c.label);
@@ -487,18 +515,17 @@
                 doc.setFontSize(10);
                 doc.text(`Tarikh Dijana: ${new Date().toLocaleDateString('ms-MY')}`, 14, 28);
                 doc.text(`Jumlah Rekod: ${rows.length}`, 14, 33);
-                doc.autoTable({
-                    head: [headers],
-                    body: rows,
-                    startY: 40,
-                    theme: 'grid',
-                    styles: { fontSize: 8 },
-                    headStyles: { fillColor: [14, 165, 233] }
+                doc.autoTable({ 
+                    head: [headers], 
+                    body: rows, 
+                    startY: 40, 
+                    theme: 'grid', 
+                    styles: { fontSize: 8 }, 
+                    headStyles: { fillColor: [14, 165, 233] } 
                 });
                 doc.save("Database_Pelajar_Tadika_Pintar.pdf");
             };
 
-            // Chart Rendering
             useEffect(() => {
                 if (view === 'dashboard' && !loading && document.getElementById('feesChart')) {
                     const ctx = document.getElementById('feesChart').getContext('2d');
@@ -518,10 +545,13 @@
                                 borderRadius: 8
                             }]
                         },
-                        options: {
-                            responsive: true,
-                            plugins: { legend: { display: false } },
-                            scales: { y: { beginAtZero: true, grid: { display: false } }, x: { grid: { display: false } } }
+                        options: { 
+                            responsive: true, 
+                            plugins: { legend: { display: false } }, 
+                            scales: { 
+                                y: { beginAtZero: true, grid: { display: false } }, 
+                                x: { grid: { display: false } } 
+                            } 
                         }
                     });
                 }
@@ -560,11 +590,13 @@
                         </nav>
 
                         <div className="p-6">
-                            <div className="bg-gradient-to-br from-indigo-500 to-purple-500 rounded-xl p-4 text-white shadow-lg shadow-indigo-200">
-                                <p className="text-xs opacity-80 mb-1">Status Sistem</p>
+                            <div className="bg-gradient-to-br from-indigo-500 to-purple-500 rounded-xl p-4 text-white shadow-lg shadow-indigo-200 cursor-pointer hover:shadow-xl transition" onClick={fetchData} title="Klik untuk refresh data">
+                                <p className="text-xs opacity-80 mb-1 flex justify-between items-center">
+                                    Status Sistem <Icon name="refresh-cw" size={14} className="opacity-70 hover:opacity-100" />
+                                </p>
                                 <div className="flex items-center gap-2">
                                     <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                                    <span className="text-sm font-semibold">Online</span>
+                                    <span className="text-sm font-semibold">Online (Live)</span>
                                 </div>
                             </div>
                         </div>
@@ -580,9 +612,15 @@
                                 <span className="font-bold text-slate-700">Tadika Pintar</span>
                              </div>
                              <div className="flex gap-2">
-                                <button onClick={() => setView('dashboard')} className="p-2 bg-slate-100 rounded-lg"><Icon name="layout-dashboard" size={20} /></button>
-                                <button onClick={() => setView('students')} className="p-2 bg-slate-100 rounded-lg"><Icon name="users" size={20} /></button>
-                                <button onClick={() => setView('database')} className="p-2 bg-slate-100 rounded-lg"><Icon name="database" size={20} /></button>
+                                <button onClick={() => setView('dashboard')} className="p-2 bg-slate-100 rounded-lg">
+                                    <Icon name="layout-dashboard" size={20} />
+                                </button>
+                                <button onClick={() => setView('students')} className="p-2 bg-slate-100 rounded-lg">
+                                    <Icon name="users" size={20} />
+                                </button>
+                                <button onClick={() => setView('transactions')} className="p-2 bg-slate-100 rounded-lg">
+                                    <Icon name="credit-card" size={20} />
+                                </button>
                              </div>
                         </div>
 
@@ -628,18 +666,16 @@
                                     </div>
                                     <div className="flex gap-3">
                                         <button onClick={downloadExcel} className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl shadow-sm transition">
-                                            <Icon name="file-spreadsheet" size={16} />
-                                            Download Excel
+                                            <Icon name="file-spreadsheet" size={16} /> Download Excel
                                         </button>
                                         <button onClick={downloadPDF} className="flex items-center gap-2 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-sm transition">
-                                            <Icon name="file-text" size={16} />
-                                            Download PDF
+                                            <Icon name="file-text" size={16} /> Download PDF
                                         </button>
                                     </div>
                                 </div>
 
                                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                                    {/* Left Panel: Filter & Selection */}
+                                    {/* Left Panel: Filters */}
                                     <div className="lg:col-span-1 space-y-6">
                                         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
                                             <div className="flex justify-between items-center mb-4">
@@ -667,27 +703,18 @@
                                         </div>
                                     </div>
 
-                                    {/* Right Panel: Data Preview */}
+                                    {/* Right Panel: Preview */}
                                     <div className="lg:col-span-3">
                                         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                                             <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                                                 <h3 className="font-bold text-slate-700 text-sm">Pratonton Data ({filteredStudents.length} Rekod)</h3>
                                                 <div className="flex gap-2">
                                                     <select 
-                                                        className="px-3 py-1 rounded-lg border text-xs text-slate-600"
-                                                        value={filters.class}
+                                                        className="px-3 py-1 rounded-lg border text-xs text-slate-600" 
+                                                        value={filters.class} 
                                                         onChange={(e) => setFilters({...filters, class: e.target.value})}
                                                     >
                                                         {classes.map(c => <option key={c} value={c}>{c === 'Semua' ? 'Semua Kelas' : c}</option>)}
-                                                    </select>
-                                                    <select 
-                                                        className="px-3 py-1 rounded-lg border text-xs text-slate-600"
-                                                        value={filters.status}
-                                                        onChange={(e) => setFilters({...filters, status: e.target.value})}
-                                                    >
-                                                        <option value="Semua">Semua Status</option>
-                                                        <option value="Tertunggak">Ada Tunggakan</option>
-                                                        <option value="Selesai">Selesai Bayar</option>
                                                     </select>
                                                 </div>
                                             </div>
@@ -716,11 +743,6 @@
                                                         ))}
                                                     </tbody>
                                                 </table>
-                                                {filteredStudents.length === 0 && (
-                                                    <div className="p-10 text-center text-slate-400">
-                                                        Tiada data untuk dipaparkan. Sila semak filter anda.
-                                                    </div>
-                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -737,26 +759,26 @@
                                         <p className="text-slate-500">Pantau yuran individu dan baki tertunggak.</p>
                                     </div>
                                     
-                                    {/* FILTERS SECTION */}
                                     <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
+                                        {/* Filter Jenis Yuran */}
                                         <div className="flex flex-col">
                                             <label className="text-xs text-slate-400 mb-1 ml-1">Jenis Yuran</label>
                                             <select 
-                                                className="px-4 py-2 rounded-xl border-none shadow-sm bg-white text-slate-600 focus:ring-2 focus:ring-sky-200 outline-none cursor-pointer"
-                                                value={filters.type}
+                                                className="px-4 py-2 rounded-xl border-none shadow-sm bg-white text-slate-600 focus:ring-2 focus:ring-sky-200 outline-none" 
+                                                value={filters.type} 
                                                 onChange={(e) => setFilters({...filters, type: e.target.value})}
                                             >
                                                 <option value="Semua">Semua Jenis</option>
-                                                <option value="Pendaftaran">Pendaftaran (One-off)</option>
-                                                <option value="Bulanan">Bulanan (Recurring)</option>
+                                                <option value="Pendaftaran">Pendaftaran</option>
+                                                <option value="Bulanan">Bulanan</option>
                                             </select>
                                         </div>
-
+                                        {/* Filter Bulan */}
                                         <div className="flex flex-col">
                                             <label className="text-xs text-slate-400 mb-1 ml-1">Rekod Bulan</label>
                                             <select 
-                                                className="px-4 py-2 rounded-xl border-none shadow-sm bg-white text-slate-600 focus:ring-2 focus:ring-sky-200 outline-none cursor-pointer"
-                                                value={filters.month}
+                                                className="px-4 py-2 rounded-xl border-none shadow-sm bg-white text-slate-600 focus:ring-2 focus:ring-sky-200 outline-none" 
+                                                value={filters.month} 
                                                 onChange={(e) => setFilters({...filters, month: e.target.value})}
                                             >
                                                 <option value="Semua">Semua Bulan</option>
@@ -765,12 +787,12 @@
                                                 ))}
                                             </select>
                                         </div>
-
+                                        {/* Filter Status */}
                                         <div className="flex flex-col">
                                             <label className="text-xs text-slate-400 mb-1 ml-1">Status</label>
                                             <select 
-                                                className="px-4 py-2 rounded-xl border-none shadow-sm bg-white text-slate-600 focus:ring-2 focus:ring-sky-200 outline-none cursor-pointer"
-                                                value={filters.status}
+                                                className="px-4 py-2 rounded-xl border-none shadow-sm bg-white text-slate-600 focus:ring-2 focus:ring-sky-200 outline-none" 
+                                                value={filters.status} 
                                                 onChange={(e) => setFilters({...filters, status: e.target.value})}
                                             >
                                                 <option value="Semua">Semua Status</option>
@@ -778,113 +800,85 @@
                                                 <option value="Selesai">Selesai Bayar</option>
                                             </select>
                                         </div>
-
+                                        {/* Filter Kelas */}
                                         <div className="flex flex-col">
                                             <label className="text-xs text-slate-400 mb-1 ml-1">Kelas</label>
                                             <select 
-                                                className="px-4 py-2 rounded-xl border-none shadow-sm bg-white text-slate-600 focus:ring-2 focus:ring-sky-200 outline-none cursor-pointer"
-                                                value={filters.class}
+                                                className="px-4 py-2 rounded-xl border-none shadow-sm bg-white text-slate-600 focus:ring-2 focus:ring-sky-200 outline-none" 
+                                                value={filters.class} 
                                                 onChange={(e) => setFilters({...filters, class: e.target.value})}
                                             >
                                                 {classes.map(c => <option key={c} value={c}>{c === 'Semua' ? 'Semua Kelas' : c}</option>)}
                                             </select>
                                         </div>
-
+                                        {/* Search Box */}
                                         <div className="flex flex-col flex-1 md:w-64">
-                                            <label className="text-xs text-slate-400 mb-1 ml-1">Carian</label>
+                                            <label className="text-xs text-slate-400 mb-1 ml-1">Carian Nama/IC</label>
                                             <div className="relative h-full">
-                                                <span className="absolute left-3 top-2.5 text-slate-400"><Icon name="search" size={16} /></span>
+                                                <span className="absolute left-3 top-2.5 text-slate-400">
+                                                    <Icon name="search" size={16} />
+                                                </span>
                                                 <input 
                                                     type="text" 
-                                                    placeholder="Nama / IC..." 
-                                                    className="pl-9 pr-4 py-2 w-full rounded-xl border-none shadow-sm focus:ring-2 focus:ring-sky-200 outline-none h-10"
-                                                    value={filters.search}
-                                                    onChange={(e) => setFilters({...filters, search: e.target.value})}
+                                                    placeholder="Cari..." 
+                                                    className="pl-9 pr-4 py-2 w-full rounded-xl border-none shadow-sm focus:ring-2 focus:ring-sky-200 outline-none h-10" 
+                                                    value={filters.search} 
+                                                    onChange={(e) => setFilters({...filters, search: e.target.value})} 
                                                 />
                                             </div>
                                         </div>
                                     </div>
                                 </div>
-                                
-                                {/* Status Chips showing active filters */}
-                                {(filters.month !== 'Semua' || filters.status !== 'Semua' || filters.type !== 'Semua') && (
-                                    <div className="flex flex-wrap gap-2">
-                                            {filters.type !== 'Semua' && (
-                                                <span className="text-xs px-3 py-1 bg-purple-100 text-purple-700 rounded-full font-semibold flex items-center gap-1">
-                                                    Jenis: {filters.type} 
-                                                    <button onClick={() => setFilters({...filters, type: 'Semua'})} className="hover:text-purple-900"><Icon name="x" size={12} /></button>
-                                                </span>
-                                            )}
-                                            {filters.month !== 'Semua' && (
-                                                <span className="text-xs px-3 py-1 bg-sky-100 text-sky-700 rounded-full font-semibold flex items-center gap-1">
-                                                    Bulan: {filters.month} 
-                                                    <button onClick={() => setFilters({...filters, month: 'Semua'})} className="hover:text-sky-900"><Icon name="x" size={12} /></button>
-                                                </span>
-                                            )}
-                                            {filters.status !== 'Semua' && (
-                                                <span className={`text-xs px-3 py-1 rounded-full font-semibold flex items-center gap-1 ${filters.status === 'Tertunggak' ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                                                    Status: {filters.status}
-                                                    <button onClick={() => setFilters({...filters, status: 'Semua'})} className="hover:opacity-75"><Icon name="x" size={12} /></button>
-                                                </span>
-                                            )}
-                                    </div>
-                                )}
 
+                                {/* Student Cards */}
                                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                                     {filteredStudents.map((student, idx) => {
                                         const displayImage = getPhotoUrl(student['Gambar Pelajar']);
-                                        
                                         let displayBaki = student.currentBalance;
-                                        let labelBaki = "Jumlah Baki (Semua)";
+                                        let labelBaki = "Jumlah Baki";
                                         let bakiColor = student.currentBalance > 0 ? 'text-rose-500' : 'text-slate-600';
 
-                                        if (filters.type === 'Pendaftaran') {
-                                            displayBaki = student.balReg;
-                                            labelBaki = "Baki Pendaftaran";
-                                            bakiColor = student.balReg > 0 ? 'text-rose-500' : 'text-slate-600';
-                                        } else if (filters.type === 'Bulanan') {
-                                            displayBaki = student.balMonthly;
-                                            labelBaki = "Baki Bulanan";
-                                            bakiColor = student.balMonthly > 0 ? 'text-rose-500' : 'text-slate-600';
+                                        if (filters.type === 'Pendaftaran') { 
+                                            displayBaki = student.balReg; 
+                                            labelBaki = "Baki Pendaftaran"; 
+                                            bakiColor = student.balReg > 0 ? 'text-rose-500' : 'text-slate-600'; 
+                                        } else if (filters.type === 'Bulanan') { 
+                                            displayBaki = student.balMonthly; 
+                                            labelBaki = "Baki Bulanan"; 
+                                            bakiColor = student.balMonthly > 0 ? 'text-rose-500' : 'text-slate-600'; 
                                         }
 
                                         return (
-                                        <div key={idx} className="bg-white rounded-2xl p-5 shadow-sm hover:shadow-md transition border border-slate-100 cursor-pointer group" onClick={() => setSelectedStudent(student)}>
-                                            <div className="flex items-start gap-4">
-                                                <div className="w-16 h-16 rounded-full bg-slate-100 overflow-hidden flex-shrink-0 border-2 border-white shadow-sm">
-                                                    {displayImage ? (
-                                                        <img src={displayImage} alt={student.Nama} className="w-full h-full object-cover" onError={(e) => e.target.src = 'https://ui-avatars.com/api/?name=' + student.Nama} />
-                                                    ) : (
-                                                        <div className="w-full h-full flex items-center justify-center bg-sky-100 text-sky-500 font-bold text-xl">
-                                                            {student.Nama ? student.Nama.charAt(0) : '?'}
-                                                        </div>
-                                                    )}
+                                            <div key={idx} className="bg-white rounded-2xl p-5 shadow-sm hover:shadow-md transition border border-slate-100 cursor-pointer group" onClick={() => setSelectedStudent(student)}>
+                                                <div className="flex items-start gap-4">
+                                                    <div className="w-16 h-16 rounded-full bg-slate-100 overflow-hidden flex-shrink-0 border-2 border-white shadow-sm">
+                                                        {displayImage ? (
+                                                            <img src={displayImage} alt={student.Nama} className="w-full h-full object-cover" onError={(e) => e.target.src = 'https://ui-avatars.com/api/?name=' + student.Nama} />
+                                                        ) : (
+                                                            <div className="w-full h-full flex items-center justify-center bg-sky-100 text-sky-500 font-bold text-xl">
+                                                                {student.Nama ? student.Nama.charAt(0) : '?'}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <h3 className="font-bold text-slate-800 truncate group-hover:text-sky-600 transition">{student.Nama}</h3>
+                                                        <p className="text-xs text-slate-400">{student.IC}</p>
+                                                        <span className="inline-block mt-2 px-2 py-1 rounded-md bg-slate-100 text-slate-600 text-xs font-semibold">{student.Kelas}</span>
+                                                    </div>
                                                 </div>
-                                                <div className="flex-1 min-w-0">
-                                                    <h3 className="font-bold text-slate-800 truncate group-hover:text-sky-600 transition">{student.Nama}</h3>
-                                                    <p className="text-xs text-slate-400">{student.IC}</p>
-                                                    <span className="inline-block mt-2 px-2 py-1 rounded-md bg-slate-100 text-slate-600 text-xs font-semibold">{student.Kelas}</span>
+                                                <div className="mt-4 pt-4 border-t border-slate-50 flex justify-between items-end">
+                                                    <div>
+                                                        <p className="text-xs text-slate-400">Total Dibayar</p>
+                                                        <p className="font-bold text-emerald-600">{formatRM(student.totalPaid)}</p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="text-xs text-slate-400">{labelBaki}</p>
+                                                        <p className={`font-bold ${bakiColor}`}>{formatRM(displayBaki)}</p>
+                                                    </div>
                                                 </div>
                                             </div>
-                                            <div className="mt-4 pt-4 border-t border-slate-50 flex justify-between items-end">
-                                                <div>
-                                                    <p className="text-xs text-slate-400">Total Dibayar</p>
-                                                    <p className="font-bold text-emerald-600">{formatRM(student.totalPaid)}</p>
-                                                </div>
-                                                <div className="text-right">
-                                                    <p className="text-xs text-slate-400">{labelBaki}</p>
-                                                    <p className={`font-bold ${bakiColor}`}>
-                                                        {formatRM(displayBaki)}
-                                                    </p>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )})}
-                                    {filteredStudents.length === 0 && (
-                                        <div className="col-span-full text-center py-10">
-                                            <p className="text-slate-400">Tiada pelajar dijumpai dengan filter ini.</p>
-                                        </div>
-                                    )}
+                                        );
+                                    })}
                                 </div>
                             </div>
                         )}
@@ -905,23 +899,22 @@
                                             <div className="w-24 h-24 rounded-full bg-white p-1 shadow-lg">
                                                  <img 
                                                     src={getPhotoUrl(selectedStudent['Gambar Pelajar']) || `https://ui-avatars.com/api/?name=${selectedStudent.Nama}`} 
-                                                    onError={(e) => e.target.src = `https://ui-avatars.com/api/?name=${selectedStudent.Nama}`}
-                                                    className="w-full h-full rounded-full object-cover"
-                                                 />
+                                                    onError={(e) => e.target.src = `https://ui-avatars.com/api/?name=${selectedStudent.Nama}`} 
+                                                    className="w-full h-full rounded-full object-cover" 
+                                                />
                                             </div>
                                             <div className="text-center md:text-left">
                                                 <h1 className="text-2xl font-bold">{selectedStudent.Nama}</h1>
                                                 <p className="opacity-90">{selectedStudent.IC}</p>
                                                 <div className="flex flex-wrap justify-center md:justify-start gap-2 mt-3">
                                                     <span className="px-3 py-1 bg-white/20 rounded-full text-sm backdrop-blur-sm">{selectedStudent.Kelas}</span>
-                                                    <span className="px-3 py-1 bg-white/20 rounded-full text-sm backdrop-blur-sm">{selectedStudent.Jantina}</span>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
 
                                     <div className="grid grid-cols-1 md:grid-cols-3">
-                                        {/* Left: Info */}
+                                        {/* Profil Kiri */}
                                         <div className="p-8 bg-slate-50 border-r border-slate-100 md:col-span-1 space-y-6">
                                             <div>
                                                 <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
@@ -929,7 +922,6 @@
                                                 </h4>
                                                 <p className="text-sm text-slate-600">{selectedStudent['Nama Waris']}</p>
                                                 <p className="text-sm text-slate-500">{selectedStudent['No Tel Waris']}</p>
-                                                <p className="text-sm text-slate-500 mt-1">{selectedStudent.Alamat}</p>
                                             </div>
                                             <div>
                                                 <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
@@ -946,50 +938,39 @@
                                                     </div>
                                                 </div>
                                             </div>
+                                            
+                                            {/* Butang WhatsApp */}
                                             <div 
-                                                onClick={() => sendWhatsAppReminder(selectedStudent)}
-                                                className={`p-4 rounded-xl border shadow-sm cursor-pointer transition group relative ${selectedStudent.currentBalance > 0 ? 'bg-white border-slate-200 hover:border-sky-300 hover:bg-slate-50' : 'bg-emerald-50 border-emerald-200 hover:border-emerald-400'}`}
-                                                title="Klik untuk hantar WhatsApp"
+                                                onClick={() => sendWhatsAppReminder(selectedStudent)} 
+                                                className={`p-4 rounded-xl border shadow-sm cursor-pointer transition group relative ${selectedStudent.currentBalance > 0 ? 'bg-white border-slate-200 hover:border-sky-300' : 'bg-emerald-50 border-emerald-200'}`}
                                             >
-                                                <div className={`absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition ${selectedStudent.currentBalance > 0 ? 'text-sky-500' : 'text-emerald-600'}`}>
-                                                    <Icon name="message-circle" size={20} />
-                                                </div>
-                                                
                                                 <p className="text-xs text-slate-400 uppercase font-bold">
                                                     {selectedStudent.currentBalance > 0 ? 'Jumlah Baki' : 'Status Yuran'}
                                                 </p>
-                                                
                                                 <p className={`text-2xl font-bold ${selectedStudent.currentBalance > 0 ? 'text-rose-500' : 'text-emerald-600'}`}>
                                                     {selectedStudent.currentBalance > 0 ? formatRM(selectedStudent.currentBalance) : 'SELESAI'}
                                                 </p>
-                                                
-                                                {selectedStudent.currentBalance > 0 ? (
-                                                    <div className="mt-2 pt-2 border-t border-slate-100 text-xs text-slate-500 space-y-1">
+                                                {selectedStudent.currentBalance > 0 && (
+                                                    <div className="mt-2 pt-2 border-t text-xs text-slate-500">
                                                         <div className="flex justify-between">
-                                                            <span>Baki Bulanan:</span>
+                                                            <span>Bulanan:</span>
                                                             <span>{formatRM(selectedStudent.balMonthly)}</span>
                                                         </div>
                                                         <div className="flex justify-between">
-                                                            <span>Baki Daftar:</span>
+                                                            <span>Daftar:</span>
                                                             <span>{formatRM(selectedStudent.balReg)}</span>
                                                         </div>
                                                     </div>
-                                                ) : (
-                                                    <div className="mt-2 pt-2 border-t border-emerald-100 text-xs text-emerald-600 flex items-center gap-1">
-                                                        <Icon name="check-circle" size={12} /> Tiada tunggakan. Terima kasih!
-                                                    </div>
                                                 )}
-
-                                                <div className={`mt-2 text-[10px] font-medium flex items-center gap-1 opacity-0 group-hover:opacity-100 transition ${selectedStudent.currentBalance > 0 ? 'text-sky-600' : 'text-emerald-700'}`}>
-                                                    <Icon name="send" size={12} /> {selectedStudent.currentBalance > 0 ? 'Hantar Peringatan' : 'Hantar Ucapan Tahniah'}
+                                                <div className="mt-2 text-[10px] font-medium flex items-center gap-1 text-sky-600">
+                                                    <Icon name="send" size={12} /> Hantar WhatsApp
                                                 </div>
                                             </div>
                                         </div>
 
-                                        {/* Right: History */}
+                                        {/* Sejarah Bayaran Kanan */}
                                         <div className="p-8 md:col-span-2">
                                             <h3 className="font-bold text-slate-800 text-lg mb-6">Sejarah Pembayaran</h3>
-                                            
                                             {selectedStudent.transactions.length > 0 ? (
                                                 <div className="space-y-4">
                                                     {selectedStudent.transactions.map((tx, i) => (
@@ -1011,8 +992,8 @@
                                                             <div className="text-right">
                                                                 <p className="font-bold text-slate-800">{tx['JUMLAH BAYARAN']}</p>
                                                                 <div className="flex gap-2 justify-end mt-1">
-                                                                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${tx.STATUS === 'LULUS' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                                                                        {tx.STATUS || 'Pending'}
+                                                                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${tx.VERIFICATION === 'VERIFIED' ? 'bg-green-100 text-green-700' : (tx.VERIFICATION === 'REJECTED' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700')}`}>
+                                                                        {tx.VERIFICATION || 'PENDING'}
                                                                     </span>
                                                                     {tx['BUKTI TRANSAKSI'] && (
                                                                         <a href={tx['BUKTI TRANSAKSI']} target="_blank" className="text-[10px] px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 hover:bg-sky-200">
@@ -1036,19 +1017,19 @@
                             </div>
                         )}
 
-                        {/* TRANSACTIONS TABLE VIEW (WITH EDITABLE DROPDOWN) */}
+                        {/* TRANSACTIONS TABLE VIEW (WITH EDITABLE DROPDOWN AND FILTERS) */}
                         {view === 'transactions' && (
                             <div className="space-y-6 fade-in">
                                 <div>
                                     <h2 className="text-2xl font-bold text-slate-800">Rekod Transaksi</h2>
-                                    <p className="text-slate-500">Log pembayaran terkini (Live dari Google Sheet). Ubah status di ruangan Verification.</p>
+                                    <p className="text-slate-500">Log pembayaran terkini (Disusun dari yang Paling Baharu hingga Terlama).</p>
                                 </div>
                                 <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                                     <div className="overflow-x-auto">
                                         <table className="w-full text-left border-collapse">
                                             <thead>
                                                 <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-100">
-                                                    <th className="p-4 font-semibold">Tarikh</th>
+                                                    <th className="p-4 font-semibold">Tarikh (Terkini)</th>
                                                     <th className="p-4 font-semibold">Nama Pelajar</th>
                                                     <th className="p-4 font-semibold">Jenis</th>
                                                     <th className="p-4 font-semibold">Keterangan</th>
@@ -1056,13 +1037,47 @@
                                                     <th className="p-4 font-semibold">Verification</th>
                                                     <th className="p-4 font-semibold text-center">Resit</th>
                                                 </tr>
+                                                {/* --- Barisan Tapis (Filter Row) --- */}
+                                                <tr className="bg-slate-50/50 border-b border-slate-200">
+                                                    <th className="px-2 py-2">
+                                                        <input type="text" placeholder="Tapis Tarikh..." className="w-full px-2 py-1 text-xs border rounded-md focus:ring-1 focus:ring-sky-500 outline-none font-normal" value={txFilters.date} onChange={e => setTxFilters({...txFilters, date: e.target.value})} />
+                                                    </th>
+                                                    <th className="px-2 py-2">
+                                                        <input type="text" placeholder="Cari Nama..." className="w-full px-2 py-1 text-xs border rounded-md focus:ring-1 focus:ring-sky-500 outline-none font-normal" value={txFilters.name} onChange={e => setTxFilters({...txFilters, name: e.target.value})} />
+                                                    </th>
+                                                    <th className="px-2 py-2">
+                                                        <select className="w-full px-2 py-1 text-xs border rounded-md focus:ring-1 focus:ring-sky-500 outline-none font-normal bg-white" value={txFilters.type} onChange={e => setTxFilters({...txFilters, type: e.target.value})}>
+                                                            <option value="Semua">Semua Jenis</option>
+                                                            <option value="Pendaftaran">Pendaftaran</option>
+                                                            <option value="Bulanan">Bulanan</option>
+                                                        </select>
+                                                    </th>
+                                                    <th className="px-2 py-2">
+                                                        <input type="text" placeholder="Bulan..." className="w-full px-2 py-1 text-xs border rounded-md focus:ring-1 focus:ring-sky-500 outline-none font-normal" value={txFilters.desc} onChange={e => setTxFilters({...txFilters, desc: e.target.value})} />
+                                                    </th>
+                                                    <th className="px-2 py-2">
+                                                        <input type="text" placeholder="RM..." className="w-full px-2 py-1 text-xs border rounded-md focus:ring-1 focus:ring-sky-500 outline-none font-normal" value={txFilters.amount} onChange={e => setTxFilters({...txFilters, amount: e.target.value})} />
+                                                    </th>
+                                                    <th className="px-2 py-2">
+                                                        <select className="w-full px-2 py-1 text-xs border rounded-md focus:ring-1 focus:ring-sky-500 outline-none font-normal bg-white" value={txFilters.verification} onChange={e => setTxFilters({...txFilters, verification: e.target.value})}>
+                                                            <option value="Semua">Semua Status</option>
+                                                            <option value="PENDING">PENDING</option>
+                                                            <option value="VERIFIED">VERIFIED</option>
+                                                            <option value="REJECTED">REJECTED</option>
+                                                        </select>
+                                                    </th>
+                                                    <th className="px-2 py-2 text-center">
+                                                        <button onClick={() => setTxFilters({date: '', name: '', type: 'Semua', desc: '', amount: '', verification: 'Semua'})} className="text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-md font-semibold transition shadow-sm w-full" title="Reset Filters">
+                                                            Reset
+                                                        </button>
+                                                    </th>
+                                                </tr>
                                             </thead>
                                             <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
-                                                {transactions.slice(0, 100).map((tx, i) => {
+                                                {filteredTransactionsList.slice(0, 100).map((tx, i) => {
                                                     const status = tx['VERIFICATION'] || 'PENDING';
                                                     const isUpdating = updatingStatus === (tx.Timestamp + tx.NAMA);
                                                     
-                                                    // Determine Dropdown Color based on Value
                                                     let statusColor = 'bg-orange-100 text-orange-700 border-orange-200';
                                                     if (status === 'VERIFIED') statusColor = 'bg-green-100 text-green-700 border-green-200';
                                                     if (status === 'REJECTED') statusColor = 'bg-red-100 text-red-700 border-red-200';
@@ -1078,8 +1093,6 @@
                                                             </td>
                                                             <td className="p-4 text-slate-500">{tx.BULAN || tx['JENIS YURAN'] || '-'}</td>
                                                             <td className="p-4 font-bold text-emerald-600">{tx['JUMLAH BAYARAN']}</td>
-                                                            
-                                                            {/* EDITABLE DROPDOWN COLUMN */}
                                                             <td className="p-4">
                                                                 {isUpdating ? (
                                                                     <div className="flex items-center gap-2 text-xs text-slate-500 animate-pulse">
@@ -1100,24 +1113,27 @@
 
                                                             <td className="p-4 text-center">
                                                                 {tx['BUKTI TRANSAKSI'] ? (
-                                                                    <a href={tx['BUKTI TRANSAKSI']} target="_blank" className="text-sky-500 hover:text-sky-700">
+                                                                    <a href={tx['BUKTI TRANSAKSI']} target="_blank" className="text-sky-500 hover:text-sky-700 flex flex-col items-center justify-center">
                                                                         <Icon name="file-text" size={20} className="mx-auto" />
+                                                                        <span className="text-[10px] mt-1">Lihat</span>
                                                                     </a>
                                                                 ) : <span className="text-slate-300">-</span>}
                                                             </td>
                                                         </tr>
                                                     );
                                                 })}
-                                                {transactions.length === 0 && (
+                                                {filteredTransactionsList.length === 0 && (
                                                     <tr>
-                                                        <td colSpan="7" className="p-8 text-center text-slate-400">Tiada data transaksi.</td>
+                                                        <td colSpan="7" className="p-8 text-center text-slate-400">
+                                                            Tiada data transaksi dijumpai mengikut tapisan anda.
+                                                        </td>
                                                     </tr>
                                                 )}
                                             </tbody>
                                         </table>
                                     </div>
                                     <div className="p-4 text-center text-xs text-slate-400 border-t border-slate-100">
-                                        Memaparkan 100 transaksi terkini
+                                        Memaparkan {Math.min(100, filteredTransactionsList.length)} daripada {filteredTransactionsList.length} transaksi terkini
                                     </div>
                                 </div>
                             </div>
