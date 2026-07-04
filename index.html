@@ -1,0 +1,1139 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Monitoring Yuran Sekolah</title>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- PapaParse for CSV -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Excel Export (SheetJS) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+    <!-- PDF Export (jsPDF & AutoTable) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Quicksand', sans-serif;
+            background-color: #f0f9ff; /* Soft Blue Background */
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .sidebar-active {
+            background-color: #e0f2fe;
+            color: #0ea5e9;
+            font-weight: 700;
+            border-right: 4px solid #0ea5e9;
+        }
+        /* Hide scrollbar for clean look */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8; 
+        }
+        /* Checkbox Custom Style */
+        .custom-checkbox:checked {
+            background-color: #0ea5e9;
+            border-color: #0ea5e9;
+        }
+        /* Animation */
+        .fade-in {
+            animation: fadeIn 0.5s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        /* Dropdown status styles */
+        .status-select {
+            appearance: none;
+            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+            background-repeat: no-repeat;
+            background-position: right 0.5rem center;
+            background-size: 1em;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // --- KONFIGURASI PENTING ---
+        // 1. Google Sheets ID
+        const SHEET_ID = '2PACX-1vTXZgRPcp3xfy3iOPQae01DZd5ODahZWkHwGucWCglxDAeFEXql_VgVVi2JcblgsLfPeLHq7bcuLWLY';
+        
+        // 2. APPS SCRIPT URL (UNTUK FUNGSI UPDATE/EDIT STATUS VERIFICATION)
+        // ** SILA MASUKKAN URL DEPLOYMENT APPS SCRIPT ANDA DI SINI **
+        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwsCfO1aYCXD_3sY3tn7j_C3nu5dHKfIm81YQjeG35o7cNT7dbFQ3tYAwGj1xlFK4uFOw/exec'; // Contoh: 'https://script.google.com/macros/s/XXX/exec'
+
+        // Tab 1: Maklumat Pelajar - GID: 0
+        const URL_STUDENTS = `https://docs.google.com/spreadsheets/d/e/${SHEET_ID}/pub?gid=0&single=true&output=csv`;
+        
+        // Tab 2: LOG YURAN BULANAN - GID: 2127535471
+        const URL_FEES_MONTHLY = `https://docs.google.com/spreadsheets/d/e/${SHEET_ID}/pub?gid=2127535471&single=true&output=csv`;
+
+        // Tab 3: LOG YURAN PENDAFTARAN - GID: 1247491467
+        const URL_FEES_REGISTRATION = `https://docs.google.com/spreadsheets/d/e/${SHEET_ID}/pub?gid=1247491467&single=true&output=csv`;
+
+        // --- CONFIG UNTUK DATABASE EXPORT ---
+        const EXPORT_COLUMNS = [
+            { id: 'Nama', label: 'Nama Pelajar' },
+            { id: 'IC', label: 'No. KP / MyKid' },
+            { id: 'Jantina', label: 'Jantina' },
+            { id: 'Kelas', label: 'Kelas' },
+            { id: 'Nama Waris', label: 'Nama Waris' },
+            { id: 'No Tel Waris', label: 'No. Tel Waris' },
+            { id: 'Alamat', label: 'Alamat' },
+            { id: 'totalPaid', label: 'Jumlah Telah Bayar (RM)' },
+            { id: 'balReg', label: 'Baki Pendaftaran (RM)' },
+            { id: 'balMonthly', label: 'Baki Bulanan (RM)' },
+            { id: 'currentBalance', label: 'Jumlah Baki Hutang (RM)' },
+            { id: 'status_text', label: 'Status Akaun' }
+        ];
+
+        // --- HELPER COMPONENT: ICON ---
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const iconRef = useRef(null);
+
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const iconName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconNode = window.lucide.icons[iconName];
+
+                    if (iconNode && iconRef.current) {
+                        iconRef.current.innerHTML = '';
+                        if (window.lucide.createElement) {
+                            const svgElement = window.lucide.createElement(iconNode);
+                            svgElement.setAttribute('width', size);
+                            svgElement.setAttribute('height', size);
+                            svgElement.setAttribute('stroke-width', 2);
+                            if (className) {
+                                const existingClass = svgElement.getAttribute('class') || '';
+                                svgElement.setAttribute('class', `${existingClass} ${className}`.trim());
+                            }
+                            iconRef.current.appendChild(svgElement);
+                        }
+                    }
+                }
+            }, [name, size, className]);
+
+            return <span ref={iconRef} className="inline-flex items-center justify-center"></span>;
+        };
+
+        // --- COMPONENTS ---
+        const Loading = () => (
+            <div className="flex flex-col items-center justify-center h-screen bg-sky-50">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-sky-500 mb-4"></div>
+                <h2 className="text-xl font-bold text-sky-700 animate-pulse">Sedang Memuat Data Sekolah...</h2>
+                <p className="text-sky-500 text-sm mt-2">Menghubungkan ke 3 Tab Google Sheets</p>
+            </div>
+        );
+
+        const ErrorScreen = ({ message, onRetry }) => (
+            <div className="flex flex-col items-center justify-center h-screen bg-red-50 text-center p-4">
+                <div className="text-red-500 mb-4"><Icon name="alert-triangle" size={64} /></div>
+                <h2 className="text-2xl font-bold text-red-700 mb-2">Gagal Memuat Data</h2>
+                <p className="text-red-600 mb-6 max-w-md">{message}</p>
+                <button onClick={onRetry} className="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-full font-semibold transition shadow-lg">
+                    Cuba Lagi
+                </button>
+            </div>
+        );
+
+        const StatCard = ({ title, value, subtext, color, iconName, iconColorClass }) => (
+            <div className={`glass-card p-6 rounded-2xl shadow-sm border-l-4 ${color} transition hover:shadow-md`}>
+                <div className="flex justify-between items-start">
+                    <div>
+                        <p className="text-gray-500 text-sm font-semibold uppercase tracking-wider">{title}</p>
+                        <h3 className="text-3xl font-bold text-gray-800 mt-1">{value}</h3>
+                        {subtext && <p className="text-xs text-gray-400 mt-2">{subtext}</p>}
+                    </div>
+                    <div className={`p-3 rounded-xl bg-white shadow-sm text-${iconColorClass}`}>
+                        <Icon name={iconName} size={24} className={`text-${iconColorClass}`} />
+                    </div>
+                </div>
+            </div>
+        );
+
+        // --- MAIN APP COMPONENT ---
+        const App = () => {
+            const [view, setView] = useState('dashboard');
+            const [students, setStudents] = useState([]);
+            const [transactions, setTransactions] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
+            const [selectedStudent, setSelectedStudent] = useState(null);
+            const [updatingStatus, setUpdatingStatus] = useState(null); 
+            
+            // Database Export State
+            const [exportCols, setExportCols] = useState(EXPORT_COLUMNS.map(c => c.id));
+
+            // Filters State
+            const [filters, setFilters] = useState({ 
+                search: '', 
+                class: 'Semua', 
+                month: 'Semua', 
+                status: 'Semua',
+                type: 'Semua' 
+            });
+
+            // Fetch Data Function
+            const fetchData = async () => {
+                setLoading(true);
+                setError(null);
+                try {
+                    const fetchCsv = (url) => new Promise((resolve, reject) => {
+                        Papa.parse(url, {
+                            download: true,
+                            header: true,
+                            skipEmptyLines: true,
+                            complete: (results) => resolve(results.data),
+                            error: (err) => reject(err)
+                        });
+                    });
+
+                    const [studentRes, monthlyRes, regRes] = await Promise.all([
+                        fetchCsv(URL_STUDENTS),
+                        fetchCsv(URL_FEES_MONTHLY),
+                        fetchCsv(URL_FEES_REGISTRATION)
+                    ]);
+
+                    const cleanKeys = (data) => data.map(item => {
+                        const clean = {};
+                        Object.keys(item).forEach(key => clean[key.trim()] = item[key]);
+                        return clean;
+                    });
+
+                    const cleanStudents = cleanKeys(studentRes);
+                    const cleanMonthly = cleanKeys(monthlyRes).map(t => ({...t, _type: 'Bulanan'}));
+                    const cleanReg = cleanKeys(regRes).map(t => ({...t, _type: 'Pendaftaran'}));
+
+                    const allTransactions = [...cleanMonthly, ...cleanReg];
+                    allTransactions.sort((a, b) => new Date(b.Timestamp) - new Date(a.Timestamp));
+
+                    setStudents(cleanStudents);
+                    setTransactions(allTransactions);
+
+                } catch (err) {
+                    console.error("CSV Error:", err);
+                    setError("Gagal membaca data dari Google Sheet. Pastikan sheet 'Published to Web'.");
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            useEffect(() => {
+                fetchData();
+            }, []);
+
+            // --- STATUS UPDATE FUNCTION ---
+            const updateStatus = async (tx, newStatus) => {
+                if (!APPS_SCRIPT_URL) {
+                    alert("Sila tetapkan APPS_SCRIPT_URL dalam kod index.html dahulu untuk membolehkan fungsi Edit!");
+                    return;
+                }
+                
+                const txId = tx.Timestamp + tx.NAMA;
+                setUpdatingStatus(txId);
+
+                try {
+                    const payload = {
+                        action: 'UPDATE_STATUS',
+                        sheetType: tx._type, // 'Bulanan' or 'Pendaftaran'
+                        timestamp: tx.Timestamp,
+                        ic: tx.IC || '',
+                        nama: tx.NAMA,
+                        newStatus: newStatus
+                    };
+
+                    // Optimistic Update (Update UI immediately)
+                    const updatedTransactions = transactions.map(t => {
+                        if (t.Timestamp === tx.Timestamp && t.NAMA === tx.NAMA) {
+                            return { ...t, VERIFICATION: newStatus };
+                        }
+                        return t;
+                    });
+                    setTransactions(updatedTransactions);
+
+                    // Send to backend
+                    const response = await fetch(APPS_SCRIPT_URL, {
+                        method: 'POST',
+                        body: JSON.stringify(payload)
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.result !== 'success') {
+                        throw new Error(result.message || "Gagal kemas kini di server");
+                    }
+
+                    console.log("Status berjaya dikemaskini");
+
+                } catch (err) {
+                    console.error("Kemas kini gagal:", err);
+                    alert("Gagal mengemaskini status: " + err.message);
+                    fetchData(); // Reload asal untuk undo optimistic update
+                } finally {
+                    setUpdatingStatus(null);
+                }
+            };
+
+            // --- DATA PROCESSING & LOGIC ---
+            const studentData = useMemo(() => {
+                return students.map(student => {
+                    const studentTxs = transactions.filter(t => t['IC'] === student['IC']);
+                    
+                    const monthlyTxs = studentTxs.filter(t => t._type === 'Bulanan');
+                    const regTxs = studentTxs.filter(t => t._type === 'Pendaftaran');
+
+                    let balMonthly = 0;
+                    if (monthlyTxs.length > 0) {
+                        const latest = monthlyTxs.sort((a, b) => new Date(b['Timestamp']) - new Date(a['Timestamp']))[0];
+                        balMonthly = parseFloat((latest['BAKI'] || '0').replace(/[^0-9.-]+/g,""));
+                    } else {
+                        balMonthly = parseFloat((student['Yuran Bulanan'] || '0').replace(/[^0-9.-]+/g,""));
+                    }
+
+                    let balReg = 0;
+                    if (regTxs.length > 0) {
+                         const latest = regTxs.sort((a, b) => new Date(b['Timestamp']) - new Date(a['Timestamp']))[0];
+                         balReg = parseFloat((latest['BAKI'] || '0').replace(/[^0-9.-]+/g,""));
+                    } else {
+                        balReg = parseFloat((student['Yuran Pendaftaran'] || '0').replace(/[^0-9.-]+/g,""));
+                    }
+
+                    const totalPaid = studentTxs.reduce((sum, tx) => {
+                        const amount = parseFloat((tx['JUMLAH BAYARAN'] || '0').replace(/[^0-9.-]+/g,""));
+                        return sum + (isNaN(amount) ? 0 : amount);
+                    }, 0);
+
+                    const currentBalance = (isNaN(balMonthly) ? 0 : balMonthly) + (isNaN(balReg) ? 0 : balReg);
+
+                    return {
+                        ...student,
+                        transactions: studentTxs,
+                        totalPaid: totalPaid,
+                        currentBalance: currentBalance,
+                        balMonthly: isNaN(balMonthly) ? 0 : balMonthly,
+                        balReg: isNaN(balReg) ? 0 : balReg,
+                        status_text: currentBalance > 0 ? 'Tertunggak' : 'Selesai'
+                    };
+                });
+            }, [students, transactions]);
+
+            const filteredStudents = useMemo(() => {
+                return studentData.filter(s => {
+                    const matchSearch = (s['Nama'] || '').toLowerCase().includes(filters.search.toLowerCase()) || 
+                                        (s['IC'] || '').includes(filters.search);
+                    const matchClass = filters.class === 'Semua' || s['Kelas'] === filters.class;
+                    
+                    const matchMonth = filters.month === 'Semua' || s.transactions.some(t => t['BULAN'] === filters.month);
+
+                    let matchStatus = true;
+                    let balanceToCheck = s.currentBalance;
+                    if (filters.type === 'Pendaftaran') balanceToCheck = s.balReg;
+                    if (filters.type === 'Bulanan') balanceToCheck = s.balMonthly;
+
+                    if (filters.status === 'Tertunggak') matchStatus = balanceToCheck > 0;
+                    if (filters.status === 'Selesai') matchStatus = balanceToCheck <= 0;
+                    
+                    return matchSearch && matchClass && matchMonth && matchStatus;
+                });
+            }, [studentData, filters]);
+
+            // Statistics logic
+            const stats = useMemo(() => {
+                const totalStudents = studentData.length;
+                const totalOutstanding = studentData.reduce((sum, student) => sum + (student.currentBalance > 0 ? student.currentBalance : 0), 0);
+                const totalCollection = transactions.reduce((sum, tx) => {
+                      const amount = parseFloat((tx['JUMLAH BAYARAN'] || '0').replace(/[^0-9.-]+/g,""));
+                      return sum + (isNaN(amount) ? 0 : amount);
+                }, 0);
+                
+                const collectionByMonth = {};
+                transactions.forEach(tx => {
+                    let month = tx['BULAN'];
+                    if (!month || month.trim() === '') month = 'Yuran Pendaftaran';
+                    const amount = parseFloat((tx['JUMLAH BAYARAN'] || '0').replace(/[^0-9.-]+/g,""));
+                    if (!collectionByMonth[month]) collectionByMonth[month] = 0;
+                    collectionByMonth[month] += (isNaN(amount) ? 0 : amount);
+                });
+
+                return { totalStudents, totalCollection, totalOutstanding, collectionByMonth };
+            }, [studentData, transactions]);
+
+            const classes = useMemo(() => {
+                const cls = new Set(students.map(s => s['Kelas']).filter(Boolean));
+                return ['Semua', ...Array.from(cls)];
+            }, [students]);
+
+            const months = useMemo(() => {
+                const m = new Set(transactions.map(t => t['BULAN']).filter(Boolean));
+                return ['Semua', ...Array.from(m)];
+            }, [transactions]);
+
+            const formatRM = (val) => "RM " + (parseFloat(val) || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            
+            const getPhotoUrl = (url) => {
+                if (!url) return null;
+                if (url.includes('drive.google.com') || url.includes('docs.google.com')) {
+                    const match = url.match(/(?:\/d\/|id=)([-\w]+)/);
+                    if (match && match[1]) return `https://lh3.googleusercontent.com/d/${match[1]}`;
+                }
+                return url;
+            };
+
+            const sendWhatsAppReminder = (student) => {
+                const phone = student['No Tel Waris'];
+                if (!phone) { alert("Nombor telefon waris tiada."); return; }
+                let cleanPhone = phone.toString().replace(/[^0-9]/g, '');
+                if (cleanPhone.startsWith('0')) cleanPhone = '60' + cleanPhone.substring(1);
+
+                let message = "";
+                if (student.currentBalance > 0) {
+                    message = `Assalamualaikum dan salam sejahtera En/Cik ${student['Nama Waris'] || ''}\n\nBerikut merupakan baki tertunggak yang perlu dibayar bagi *${student.Nama}*:\n\n*Jumlah Tertunggak: ${formatRM(student.currentBalance)}*\n------------------------------\nPecahan Baki:\n• Baki Pendaftaran: ${formatRM(student.balReg)}\n• Baki Bulanan: ${formatRM(student.balMonthly)}\n\nMohon jelaskan bayaran secepat mungkin. Terima kasih.`;
+                } else {
+                    message = `Assalamualaikum dan salam sejahtera En/Cik ${student['Nama Waris'] || ''}\n\nPihak Tadika ingin merakamkan ucapan *TAHNIAH dan TERIMA KASIH* atas komitmen tuan/puan menyelesaikan pembayaran yuran bagi anak anda, *${student.Nama}*.\n\nSokongan anda amat kami hargai. Terima kasih.`;
+                }
+                window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`, '_blank');
+            };
+
+            // --- EXPORT FUNCTIONS (EXCEL/PDF) ---
+            const toggleColumn = (id) => {
+                if (exportCols.includes(id)) {
+                    setExportCols(exportCols.filter(col => col !== id));
+                } else {
+                    setExportCols([...exportCols, id]);
+                }
+            };
+
+            const toggleAllColumns = () => {
+                if (exportCols.length === EXPORT_COLUMNS.length) {
+                    setExportCols([]);
+                } else {
+                    setExportCols(EXPORT_COLUMNS.map(c => c.id));
+                }
+            };
+
+            const generateExportData = () => {
+                return filteredStudents.map(student => {
+                    const row = {};
+                    EXPORT_COLUMNS.forEach(col => {
+                        if (exportCols.includes(col.id)) {
+                            if (['totalPaid', 'balReg', 'balMonthly', 'currentBalance'].includes(col.id)) {
+                                row[col.label] = (parseFloat(student[col.id]) || 0).toFixed(2);
+                            } else {
+                                row[col.label] = student[col.id] || '-';
+                            }
+                        }
+                    });
+                    return row;
+                });
+            };
+
+            const downloadExcel = () => {
+                const data = generateExportData();
+                if (data.length === 0) { alert("Tiada data untuk dimuat turun."); return; }
+                const ws = XLSX.utils.json_to_sheet(data);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "Database Pelajar");
+                XLSX.writeFile(wb, "Database_Pelajar_Tadika_Pintar.xlsx");
+            };
+
+            const downloadPDF = () => {
+                const data = generateExportData();
+                if (data.length === 0) { alert("Tiada data untuk dimuat turun."); return; }
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF({ orientation: 'landscape' });
+                const headers = EXPORT_COLUMNS.filter(c => exportCols.includes(c.id)).map(c => c.label);
+                const rows = data.map(obj => Object.values(obj));
+                doc.setFontSize(18);
+                doc.text("Database Pelajar - Tadika Pintar", 14, 20);
+                doc.setFontSize(10);
+                doc.text(`Tarikh Dijana: ${new Date().toLocaleDateString('ms-MY')}`, 14, 28);
+                doc.text(`Jumlah Rekod: ${rows.length}`, 14, 33);
+                doc.autoTable({
+                    head: [headers],
+                    body: rows,
+                    startY: 40,
+                    theme: 'grid',
+                    styles: { fontSize: 8 },
+                    headStyles: { fillColor: [14, 165, 233] }
+                });
+                doc.save("Database_Pelajar_Tadika_Pintar.pdf");
+            };
+
+            // Chart Rendering
+            useEffect(() => {
+                if (view === 'dashboard' && !loading && document.getElementById('feesChart')) {
+                    const ctx = document.getElementById('feesChart').getContext('2d');
+                    if (window.myChart) window.myChart.destroy();
+                    const labels = Object.keys(stats.collectionByMonth);
+                    const data = Object.values(stats.collectionByMonth);
+                    window.myChart = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: 'Jumlah Kutipan (RM)',
+                                data: data,
+                                backgroundColor: 'rgba(14, 165, 233, 0.6)',
+                                borderColor: 'rgba(14, 165, 233, 1)',
+                                borderWidth: 1,
+                                borderRadius: 8
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: { legend: { display: false } },
+                            scales: { y: { beginAtZero: true, grid: { display: false } }, x: { grid: { display: false } } }
+                        }
+                    });
+                }
+            }, [view, stats, loading]);
+
+            if (loading) return <Loading />;
+            if (error) return <ErrorScreen message={error} onRetry={fetchData} />;
+
+            return (
+                <div className="flex min-h-screen">
+                    {/* SIDEBAR */}
+                    <aside className="w-64 bg-white hidden md:flex flex-col border-r border-slate-100 fixed h-full z-10">
+                        <div className="p-6 flex items-center gap-3">
+                            <div className="w-10 h-10 bg-sky-500 rounded-xl flex items-center justify-center text-white shadow-lg shadow-sky-200">
+                                <Icon name="graduation-cap" className="text-white" size={24} />
+                            </div>
+                            <div>
+                                <h1 className="font-bold text-slate-800 text-lg">Tadika Pintar</h1>
+                                <p className="text-xs text-slate-400">Sistem Pengurusan Yuran</p>
+                            </div>
+                        </div>
+
+                        <nav className="flex-1 px-4 space-y-2 mt-4">
+                            <button onClick={() => { setView('dashboard'); setSelectedStudent(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${view === 'dashboard' ? 'sidebar-active' : 'text-slate-500 hover:bg-slate-50'}`}>
+                                <Icon name="layout-dashboard" size={20} /> <span>Dashboard</span>
+                            </button>
+                            <button onClick={() => { setView('students'); setSelectedStudent(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${view === 'students' ? 'sidebar-active' : 'text-slate-500 hover:bg-slate-50'}`}>
+                                <Icon name="users" size={20} /> <span>Senarai Pelajar</span>
+                            </button>
+                            <button onClick={() => { setView('transactions'); setSelectedStudent(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${view === 'transactions' ? 'sidebar-active' : 'text-slate-500 hover:bg-slate-50'}`}>
+                                <Icon name="credit-card" size={20} /> <span>Rekod Transaksi</span>
+                            </button>
+                            <button onClick={() => { setView('database'); setSelectedStudent(null); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${view === 'database' ? 'sidebar-active' : 'text-slate-500 hover:bg-slate-50'}`}>
+                                <Icon name="database" size={20} /> <span>Database Pelajar</span>
+                            </button>
+                        </nav>
+
+                        <div className="p-6">
+                            <div className="bg-gradient-to-br from-indigo-500 to-purple-500 rounded-xl p-4 text-white shadow-lg shadow-indigo-200">
+                                <p className="text-xs opacity-80 mb-1">Status Sistem</p>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                                    <span className="text-sm font-semibold">Online</span>
+                                </div>
+                            </div>
+                        </div>
+                    </aside>
+
+                    {/* MAIN CONTENT */}
+                    <main className="flex-1 md:ml-64 p-4 md:p-8 overflow-y-auto">
+                        
+                        {/* HEADER MOBILE */}
+                        <div className="md:hidden flex items-center justify-between mb-6 bg-white p-4 rounded-xl shadow-sm">
+                             <div className="flex items-center gap-2">
+                                <Icon name="graduation-cap" className="text-sky-500" size={24} />
+                                <span className="font-bold text-slate-700">Tadika Pintar</span>
+                             </div>
+                             <div className="flex gap-2">
+                                <button onClick={() => setView('dashboard')} className="p-2 bg-slate-100 rounded-lg"><Icon name="layout-dashboard" size={20} /></button>
+                                <button onClick={() => setView('students')} className="p-2 bg-slate-100 rounded-lg"><Icon name="users" size={20} /></button>
+                                <button onClick={() => setView('database')} className="p-2 bg-slate-100 rounded-lg"><Icon name="database" size={20} /></button>
+                             </div>
+                        </div>
+
+                        {/* DASHBOARD VIEW */}
+                        {view === 'dashboard' && (
+                            <div className="space-y-6 fade-in">
+                                <div>
+                                    <h2 className="text-2xl font-bold text-slate-800">Analisis Kewangan</h2>
+                                    <p className="text-slate-500">Ringkasan kutipan yuran (Bulanan & Pendaftaran).</p>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <StatCard title="Jumlah Pelajar" value={stats.totalStudents} subtext="Aktif mendaftar" color="border-purple-400" iconName="users" iconColorClass="purple-500" />
+                                    <StatCard title="Jumlah Kutipan" value={formatRM(stats.totalCollection)} subtext="Semua jenis yuran" color="border-teal-400" iconName="wallet" iconColorClass="teal-500" />
+                                    <StatCard title="Jumlah Baki Hutang" value={formatRM(stats.totalOutstanding)} subtext="Keseluruhan tunggakan pelajar" color="border-rose-400" iconName="alert-circle" iconColorClass="rose-500" />
+                                </div>
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                    <div className="lg:col-span-2 glass-card p-6 rounded-2xl">
+                                        <h3 className="font-bold text-slate-700 mb-4">Trend Bayaran Bulanan</h3>
+                                        <canvas id="feesChart" height="150"></canvas>
+                                    </div>
+                                    <div className="glass-card p-6 rounded-2xl">
+                                        <h3 className="font-bold text-slate-700 mb-4">Pautan Pantas</h3>
+                                        <div className="space-y-3">
+                                            <button onClick={() => setView('students')} className="w-full text-left p-3 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-700 font-medium transition flex items-center justify-between">
+                                                Semak Baki Pelajar <Icon name="chevron-right" size={16} />
+                                            </button>
+                                            <button onClick={() => window.open(URL_STUDENTS, '_blank')} className="w-full text-left p-3 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-medium transition flex items-center justify-between">
+                                                Lihat Google Sheet (Data) <Icon name="external-link" size={16} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* DATABASE EXPORT VIEW */}
+                        {view === 'database' && (
+                            <div className="space-y-6 fade-in">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                    <div>
+                                        <h2 className="text-2xl font-bold text-slate-800">Database Pelajar</h2>
+                                        <p className="text-slate-500">Muat turun data pelajar secara tersuai (Custom Export).</p>
+                                    </div>
+                                    <div className="flex gap-3">
+                                        <button onClick={downloadExcel} className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl shadow-sm transition">
+                                            <Icon name="file-spreadsheet" size={16} />
+                                            Download Excel
+                                        </button>
+                                        <button onClick={downloadPDF} className="flex items-center gap-2 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-sm transition">
+                                            <Icon name="file-text" size={16} />
+                                            Download PDF
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                                    {/* Left Panel: Filter & Selection */}
+                                    <div className="lg:col-span-1 space-y-6">
+                                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                                            <div className="flex justify-between items-center mb-4">
+                                                <h3 className="font-bold text-slate-700">Pilih Data</h3>
+                                                <button onClick={toggleAllColumns} className="text-xs text-sky-600 hover:underline">
+                                                    {exportCols.length === EXPORT_COLUMNS.length ? 'Nyahpilih Semua' : 'Pilih Semua'}
+                                                </button>
+                                            </div>
+                                            <div className="space-y-3">
+                                                {EXPORT_COLUMNS.map(col => (
+                                                    <label key={col.id} className="flex items-center gap-3 cursor-pointer hover:bg-slate-50 p-2 rounded-lg transition">
+                                                        <div className={`w-5 h-5 rounded border flex items-center justify-center transition ${exportCols.includes(col.id) ? 'bg-sky-500 border-sky-500 text-white' : 'border-slate-300'}`}>
+                                                            {exportCols.includes(col.id) && <Icon name="check" size={12} />}
+                                                        </div>
+                                                        <input 
+                                                            type="checkbox" 
+                                                            className="hidden" 
+                                                            checked={exportCols.includes(col.id)} 
+                                                            onChange={() => toggleColumn(col.id)} 
+                                                        />
+                                                        <span className="text-sm text-slate-600">{col.label}</span>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Right Panel: Data Preview */}
+                                    <div className="lg:col-span-3">
+                                        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                                            <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                                                <h3 className="font-bold text-slate-700 text-sm">Pratonton Data ({filteredStudents.length} Rekod)</h3>
+                                                <div className="flex gap-2">
+                                                    <select 
+                                                        className="px-3 py-1 rounded-lg border text-xs text-slate-600"
+                                                        value={filters.class}
+                                                        onChange={(e) => setFilters({...filters, class: e.target.value})}
+                                                    >
+                                                        {classes.map(c => <option key={c} value={c}>{c === 'Semua' ? 'Semua Kelas' : c}</option>)}
+                                                    </select>
+                                                    <select 
+                                                        className="px-3 py-1 rounded-lg border text-xs text-slate-600"
+                                                        value={filters.status}
+                                                        onChange={(e) => setFilters({...filters, status: e.target.value})}
+                                                    >
+                                                        <option value="Semua">Semua Status</option>
+                                                        <option value="Tertunggak">Ada Tunggakan</option>
+                                                        <option value="Selesai">Selesai Bayar</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div className="overflow-x-auto max-h-[600px]">
+                                                <table className="w-full text-left border-collapse">
+                                                    <thead>
+                                                        <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-100 sticky top-0">
+                                                            <th className="p-4 w-10">#</th>
+                                                            {EXPORT_COLUMNS.filter(c => exportCols.includes(c.id)).map(col => (
+                                                                <th key={col.id} className="p-4 whitespace-nowrap">{col.label}</th>
+                                                            ))}
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
+                                                        {filteredStudents.map((student, idx) => (
+                                                            <tr key={idx} className="hover:bg-slate-50 transition">
+                                                                <td className="p-4 text-xs text-slate-400">{idx + 1}</td>
+                                                                {EXPORT_COLUMNS.filter(c => exportCols.includes(c.id)).map(col => {
+                                                                    let val = student[col.id];
+                                                                    if (['totalPaid', 'balReg', 'balMonthly', 'currentBalance'].includes(col.id)) {
+                                                                        val = (parseFloat(val) || 0).toFixed(2);
+                                                                    }
+                                                                    return <td key={col.id} className="p-4 whitespace-nowrap">{val || '-'}</td>
+                                                                })}
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                                {filteredStudents.length === 0 && (
+                                                    <div className="p-10 text-center text-slate-400">
+                                                        Tiada data untuk dipaparkan. Sila semak filter anda.
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* STUDENT LIST VIEW */}
+                        {view === 'students' && !selectedStudent && (
+                            <div className="space-y-6 fade-in">
+                                <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+                                    <div>
+                                        <h2 className="text-2xl font-bold text-slate-800">Senarai Pelajar</h2>
+                                        <p className="text-slate-500">Pantau yuran individu dan baki tertunggak.</p>
+                                    </div>
+                                    
+                                    {/* FILTERS SECTION */}
+                                    <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
+                                        <div className="flex flex-col">
+                                            <label className="text-xs text-slate-400 mb-1 ml-1">Jenis Yuran</label>
+                                            <select 
+                                                className="px-4 py-2 rounded-xl border-none shadow-sm bg-white text-slate-600 focus:ring-2 focus:ring-sky-200 outline-none cursor-pointer"
+                                                value={filters.type}
+                                                onChange={(e) => setFilters({...filters, type: e.target.value})}
+                                            >
+                                                <option value="Semua">Semua Jenis</option>
+                                                <option value="Pendaftaran">Pendaftaran (One-off)</option>
+                                                <option value="Bulanan">Bulanan (Recurring)</option>
+                                            </select>
+                                        </div>
+
+                                        <div className="flex flex-col">
+                                            <label className="text-xs text-slate-400 mb-1 ml-1">Rekod Bulan</label>
+                                            <select 
+                                                className="px-4 py-2 rounded-xl border-none shadow-sm bg-white text-slate-600 focus:ring-2 focus:ring-sky-200 outline-none cursor-pointer"
+                                                value={filters.month}
+                                                onChange={(e) => setFilters({...filters, month: e.target.value})}
+                                            >
+                                                <option value="Semua">Semua Bulan</option>
+                                                {months.filter(m => m !== 'Semua').map(m => (
+                                                    <option key={m} value={m}>{m}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        <div className="flex flex-col">
+                                            <label className="text-xs text-slate-400 mb-1 ml-1">Status</label>
+                                            <select 
+                                                className="px-4 py-2 rounded-xl border-none shadow-sm bg-white text-slate-600 focus:ring-2 focus:ring-sky-200 outline-none cursor-pointer"
+                                                value={filters.status}
+                                                onChange={(e) => setFilters({...filters, status: e.target.value})}
+                                            >
+                                                <option value="Semua">Semua Status</option>
+                                                <option value="Tertunggak">Ada Tunggakan</option>
+                                                <option value="Selesai">Selesai Bayar</option>
+                                            </select>
+                                        </div>
+
+                                        <div className="flex flex-col">
+                                            <label className="text-xs text-slate-400 mb-1 ml-1">Kelas</label>
+                                            <select 
+                                                className="px-4 py-2 rounded-xl border-none shadow-sm bg-white text-slate-600 focus:ring-2 focus:ring-sky-200 outline-none cursor-pointer"
+                                                value={filters.class}
+                                                onChange={(e) => setFilters({...filters, class: e.target.value})}
+                                            >
+                                                {classes.map(c => <option key={c} value={c}>{c === 'Semua' ? 'Semua Kelas' : c}</option>)}
+                                            </select>
+                                        </div>
+
+                                        <div className="flex flex-col flex-1 md:w-64">
+                                            <label className="text-xs text-slate-400 mb-1 ml-1">Carian</label>
+                                            <div className="relative h-full">
+                                                <span className="absolute left-3 top-2.5 text-slate-400"><Icon name="search" size={16} /></span>
+                                                <input 
+                                                    type="text" 
+                                                    placeholder="Nama / IC..." 
+                                                    className="pl-9 pr-4 py-2 w-full rounded-xl border-none shadow-sm focus:ring-2 focus:ring-sky-200 outline-none h-10"
+                                                    value={filters.search}
+                                                    onChange={(e) => setFilters({...filters, search: e.target.value})}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                {/* Status Chips showing active filters */}
+                                {(filters.month !== 'Semua' || filters.status !== 'Semua' || filters.type !== 'Semua') && (
+                                    <div className="flex flex-wrap gap-2">
+                                            {filters.type !== 'Semua' && (
+                                                <span className="text-xs px-3 py-1 bg-purple-100 text-purple-700 rounded-full font-semibold flex items-center gap-1">
+                                                    Jenis: {filters.type} 
+                                                    <button onClick={() => setFilters({...filters, type: 'Semua'})} className="hover:text-purple-900"><Icon name="x" size={12} /></button>
+                                                </span>
+                                            )}
+                                            {filters.month !== 'Semua' && (
+                                                <span className="text-xs px-3 py-1 bg-sky-100 text-sky-700 rounded-full font-semibold flex items-center gap-1">
+                                                    Bulan: {filters.month} 
+                                                    <button onClick={() => setFilters({...filters, month: 'Semua'})} className="hover:text-sky-900"><Icon name="x" size={12} /></button>
+                                                </span>
+                                            )}
+                                            {filters.status !== 'Semua' && (
+                                                <span className={`text-xs px-3 py-1 rounded-full font-semibold flex items-center gap-1 ${filters.status === 'Tertunggak' ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                                    Status: {filters.status}
+                                                    <button onClick={() => setFilters({...filters, status: 'Semua'})} className="hover:opacity-75"><Icon name="x" size={12} /></button>
+                                                </span>
+                                            )}
+                                    </div>
+                                )}
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                                    {filteredStudents.map((student, idx) => {
+                                        const displayImage = getPhotoUrl(student['Gambar Pelajar']);
+                                        
+                                        let displayBaki = student.currentBalance;
+                                        let labelBaki = "Jumlah Baki (Semua)";
+                                        let bakiColor = student.currentBalance > 0 ? 'text-rose-500' : 'text-slate-600';
+
+                                        if (filters.type === 'Pendaftaran') {
+                                            displayBaki = student.balReg;
+                                            labelBaki = "Baki Pendaftaran";
+                                            bakiColor = student.balReg > 0 ? 'text-rose-500' : 'text-slate-600';
+                                        } else if (filters.type === 'Bulanan') {
+                                            displayBaki = student.balMonthly;
+                                            labelBaki = "Baki Bulanan";
+                                            bakiColor = student.balMonthly > 0 ? 'text-rose-500' : 'text-slate-600';
+                                        }
+
+                                        return (
+                                        <div key={idx} className="bg-white rounded-2xl p-5 shadow-sm hover:shadow-md transition border border-slate-100 cursor-pointer group" onClick={() => setSelectedStudent(student)}>
+                                            <div className="flex items-start gap-4">
+                                                <div className="w-16 h-16 rounded-full bg-slate-100 overflow-hidden flex-shrink-0 border-2 border-white shadow-sm">
+                                                    {displayImage ? (
+                                                        <img src={displayImage} alt={student.Nama} className="w-full h-full object-cover" onError={(e) => e.target.src = 'https://ui-avatars.com/api/?name=' + student.Nama} />
+                                                    ) : (
+                                                        <div className="w-full h-full flex items-center justify-center bg-sky-100 text-sky-500 font-bold text-xl">
+                                                            {student.Nama ? student.Nama.charAt(0) : '?'}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <h3 className="font-bold text-slate-800 truncate group-hover:text-sky-600 transition">{student.Nama}</h3>
+                                                    <p className="text-xs text-slate-400">{student.IC}</p>
+                                                    <span className="inline-block mt-2 px-2 py-1 rounded-md bg-slate-100 text-slate-600 text-xs font-semibold">{student.Kelas}</span>
+                                                </div>
+                                            </div>
+                                            <div className="mt-4 pt-4 border-t border-slate-50 flex justify-between items-end">
+                                                <div>
+                                                    <p className="text-xs text-slate-400">Total Dibayar</p>
+                                                    <p className="font-bold text-emerald-600">{formatRM(student.totalPaid)}</p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="text-xs text-slate-400">{labelBaki}</p>
+                                                    <p className={`font-bold ${bakiColor}`}>
+                                                        {formatRM(displayBaki)}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )})}
+                                    {filteredStudents.length === 0 && (
+                                        <div className="col-span-full text-center py-10">
+                                            <p className="text-slate-400">Tiada pelajar dijumpai dengan filter ini.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* STUDENT DETAIL VIEW */}
+                        {view === 'students' && selectedStudent && (
+                            <div className="fade-in max-w-4xl mx-auto">
+                                <button onClick={() => setSelectedStudent(null)} className="mb-4 flex items-center gap-2 text-slate-500 hover:text-sky-600 transition">
+                                    <Icon name="arrow-left" size={16} /> Kembali ke Senarai
+                                </button>
+                                
+                                <div className="bg-white rounded-3xl shadow-lg overflow-hidden border border-slate-100">
+                                    <div className="bg-gradient-to-r from-sky-500 to-indigo-500 p-8 text-white relative">
+                                        <div className="absolute top-0 right-0 p-4 opacity-10">
+                                            <Icon name="graduation-cap" size={128} />
+                                        </div>
+                                        <div className="flex flex-col md:flex-row items-center gap-6 relative z-10">
+                                            <div className="w-24 h-24 rounded-full bg-white p-1 shadow-lg">
+                                                 <img 
+                                                    src={getPhotoUrl(selectedStudent['Gambar Pelajar']) || `https://ui-avatars.com/api/?name=${selectedStudent.Nama}`} 
+                                                    onError={(e) => e.target.src = `https://ui-avatars.com/api/?name=${selectedStudent.Nama}`}
+                                                    className="w-full h-full rounded-full object-cover"
+                                                 />
+                                            </div>
+                                            <div className="text-center md:text-left">
+                                                <h1 className="text-2xl font-bold">{selectedStudent.Nama}</h1>
+                                                <p className="opacity-90">{selectedStudent.IC}</p>
+                                                <div className="flex flex-wrap justify-center md:justify-start gap-2 mt-3">
+                                                    <span className="px-3 py-1 bg-white/20 rounded-full text-sm backdrop-blur-sm">{selectedStudent.Kelas}</span>
+                                                    <span className="px-3 py-1 bg-white/20 rounded-full text-sm backdrop-blur-sm">{selectedStudent.Jantina}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-3">
+                                        {/* Left: Info */}
+                                        <div className="p-8 bg-slate-50 border-r border-slate-100 md:col-span-1 space-y-6">
+                                            <div>
+                                                <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
+                                                    <Icon name="user" className="text-sky-500" size={16} /> Waris
+                                                </h4>
+                                                <p className="text-sm text-slate-600">{selectedStudent['Nama Waris']}</p>
+                                                <p className="text-sm text-slate-500">{selectedStudent['No Tel Waris']}</p>
+                                                <p className="text-sm text-slate-500 mt-1">{selectedStudent.Alamat}</p>
+                                            </div>
+                                            <div>
+                                                <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
+                                                    <Icon name="info" className="text-sky-500" size={16} /> Info Yuran
+                                                </h4>
+                                                <div className="space-y-2">
+                                                    <div className="flex justify-between text-sm">
+                                                        <span className="text-slate-500">Pendaftaran</span>
+                                                        <span className="font-semibold">{selectedStudent['Yuran Pendaftaran']}</span>
+                                                    </div>
+                                                    <div className="flex justify-between text-sm">
+                                                        <span className="text-slate-500">Bulanan</span>
+                                                        <span className="font-semibold">{selectedStudent['Yuran Bulanan']}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div 
+                                                onClick={() => sendWhatsAppReminder(selectedStudent)}
+                                                className={`p-4 rounded-xl border shadow-sm cursor-pointer transition group relative ${selectedStudent.currentBalance > 0 ? 'bg-white border-slate-200 hover:border-sky-300 hover:bg-slate-50' : 'bg-emerald-50 border-emerald-200 hover:border-emerald-400'}`}
+                                                title="Klik untuk hantar WhatsApp"
+                                            >
+                                                <div className={`absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition ${selectedStudent.currentBalance > 0 ? 'text-sky-500' : 'text-emerald-600'}`}>
+                                                    <Icon name="message-circle" size={20} />
+                                                </div>
+                                                
+                                                <p className="text-xs text-slate-400 uppercase font-bold">
+                                                    {selectedStudent.currentBalance > 0 ? 'Jumlah Baki' : 'Status Yuran'}
+                                                </p>
+                                                
+                                                <p className={`text-2xl font-bold ${selectedStudent.currentBalance > 0 ? 'text-rose-500' : 'text-emerald-600'}`}>
+                                                    {selectedStudent.currentBalance > 0 ? formatRM(selectedStudent.currentBalance) : 'SELESAI'}
+                                                </p>
+                                                
+                                                {selectedStudent.currentBalance > 0 ? (
+                                                    <div className="mt-2 pt-2 border-t border-slate-100 text-xs text-slate-500 space-y-1">
+                                                        <div className="flex justify-between">
+                                                            <span>Baki Bulanan:</span>
+                                                            <span>{formatRM(selectedStudent.balMonthly)}</span>
+                                                        </div>
+                                                        <div className="flex justify-between">
+                                                            <span>Baki Daftar:</span>
+                                                            <span>{formatRM(selectedStudent.balReg)}</span>
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div className="mt-2 pt-2 border-t border-emerald-100 text-xs text-emerald-600 flex items-center gap-1">
+                                                        <Icon name="check-circle" size={12} /> Tiada tunggakan. Terima kasih!
+                                                    </div>
+                                                )}
+
+                                                <div className={`mt-2 text-[10px] font-medium flex items-center gap-1 opacity-0 group-hover:opacity-100 transition ${selectedStudent.currentBalance > 0 ? 'text-sky-600' : 'text-emerald-700'}`}>
+                                                    <Icon name="send" size={12} /> {selectedStudent.currentBalance > 0 ? 'Hantar Peringatan' : 'Hantar Ucapan Tahniah'}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Right: History */}
+                                        <div className="p-8 md:col-span-2">
+                                            <h3 className="font-bold text-slate-800 text-lg mb-6">Sejarah Pembayaran</h3>
+                                            
+                                            {selectedStudent.transactions.length > 0 ? (
+                                                <div className="space-y-4">
+                                                    {selectedStudent.transactions.map((tx, i) => (
+                                                        <div key={i} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl border border-slate-100 hover:bg-slate-50 transition gap-4">
+                                                            <div className="flex items-center gap-4">
+                                                                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${tx._type === 'Pendaftaran' ? 'bg-purple-100 text-purple-600' : 'bg-emerald-100 text-emerald-600'}`}>
+                                                                    <Icon name={tx._type === 'Pendaftaran' ? 'clipboard-list' : 'calendar-check'} size={20} />
+                                                                </div>
+                                                                <div>
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className={`text-[10px] px-2 py-0.5 rounded border ${tx._type === 'Pendaftaran' ? 'border-purple-200 text-purple-700 bg-purple-50' : 'border-emerald-200 text-emerald-700 bg-emerald-50'}`}>
+                                                                            {tx._type}
+                                                                        </span>
+                                                                        {tx.BULAN && <span className="font-bold text-slate-700">{tx.BULAN}</span>}
+                                                                    </div>
+                                                                    <p className="text-xs text-slate-400 mt-1">{tx.Timestamp}</p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <p className="font-bold text-slate-800">{tx['JUMLAH BAYARAN']}</p>
+                                                                <div className="flex gap-2 justify-end mt-1">
+                                                                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${tx.STATUS === 'LULUS' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                                                                        {tx.STATUS || 'Pending'}
+                                                                    </span>
+                                                                    {tx['BUKTI TRANSAKSI'] && (
+                                                                        <a href={tx['BUKTI TRANSAKSI']} target="_blank" className="text-[10px] px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 hover:bg-sky-200">
+                                                                            Lihat Resit
+                                                                        </a>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <div className="text-center py-12 bg-slate-50 rounded-xl border border-dashed border-slate-300">
+                                                    <div className="text-slate-300 mx-auto mb-2 w-10 h-10 flex justify-center"><Icon name="inbox" size={40} /></div>
+                                                    <p className="text-slate-500">Tiada rekod transaksi dijumpai untuk pelajar ini.</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* TRANSACTIONS TABLE VIEW (WITH EDITABLE DROPDOWN) */}
+                        {view === 'transactions' && (
+                            <div className="space-y-6 fade-in">
+                                <div>
+                                    <h2 className="text-2xl font-bold text-slate-800">Rekod Transaksi</h2>
+                                    <p className="text-slate-500">Log pembayaran terkini (Live dari Google Sheet). Ubah status di ruangan Verification.</p>
+                                </div>
+                                <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-left border-collapse">
+                                            <thead>
+                                                <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-100">
+                                                    <th className="p-4 font-semibold">Tarikh</th>
+                                                    <th className="p-4 font-semibold">Nama Pelajar</th>
+                                                    <th className="p-4 font-semibold">Jenis</th>
+                                                    <th className="p-4 font-semibold">Keterangan</th>
+                                                    <th className="p-4 font-semibold">Jumlah</th>
+                                                    <th className="p-4 font-semibold">Verification</th>
+                                                    <th className="p-4 font-semibold text-center">Resit</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
+                                                {transactions.slice(0, 100).map((tx, i) => {
+                                                    const status = tx['VERIFICATION'] || 'PENDING';
+                                                    const isUpdating = updatingStatus === (tx.Timestamp + tx.NAMA);
+                                                    
+                                                    // Determine Dropdown Color based on Value
+                                                    let statusColor = 'bg-orange-100 text-orange-700 border-orange-200';
+                                                    if (status === 'VERIFIED') statusColor = 'bg-green-100 text-green-700 border-green-200';
+                                                    if (status === 'REJECTED') statusColor = 'bg-red-100 text-red-700 border-red-200';
+
+                                                    return (
+                                                        <tr key={i} className="hover:bg-slate-50 transition">
+                                                            <td className="p-4 whitespace-nowrap text-xs">{tx.Timestamp}</td>
+                                                            <td className="p-4 font-medium">{tx.NAMA}</td>
+                                                            <td className="p-4">
+                                                                <span className={`px-2 py-1 rounded text-xs font-semibold ${tx._type === 'Pendaftaran' ? 'bg-purple-100 text-purple-700' : 'bg-sky-100 text-sky-700'}`}>
+                                                                    {tx._type}
+                                                                </span>
+                                                            </td>
+                                                            <td className="p-4 text-slate-500">{tx.BULAN || tx['JENIS YURAN'] || '-'}</td>
+                                                            <td className="p-4 font-bold text-emerald-600">{tx['JUMLAH BAYARAN']}</td>
+                                                            
+                                                            {/* EDITABLE DROPDOWN COLUMN */}
+                                                            <td className="p-4">
+                                                                {isUpdating ? (
+                                                                    <div className="flex items-center gap-2 text-xs text-slate-500 animate-pulse">
+                                                                        <div className="w-3 h-3 rounded-full bg-slate-400"></div> Updating...
+                                                                    </div>
+                                                                ) : (
+                                                                    <select 
+                                                                        value={status}
+                                                                        onChange={(e) => updateStatus(tx, e.target.value)}
+                                                                        className={`status-select px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-slate-300 ${statusColor}`}
+                                                                    >
+                                                                        <option value="PENDING">PENDING</option>
+                                                                        <option value="VERIFIED">VERIFIED</option>
+                                                                        <option value="REJECTED">REJECTED</option>
+                                                                    </select>
+                                                                )}
+                                                            </td>
+
+                                                            <td className="p-4 text-center">
+                                                                {tx['BUKTI TRANSAKSI'] ? (
+                                                                    <a href={tx['BUKTI TRANSAKSI']} target="_blank" className="text-sky-500 hover:text-sky-700">
+                                                                        <Icon name="file-text" size={20} className="mx-auto" />
+                                                                    </a>
+                                                                ) : <span className="text-slate-300">-</span>}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                                {transactions.length === 0 && (
+                                                    <tr>
+                                                        <td colSpan="7" className="p-8 text-center text-slate-400">Tiada data transaksi.</td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div className="p-4 text-center text-xs text-slate-400 border-t border-slate-100">
+                                        Memaparkan 100 transaksi terkini
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        
+                        <footer className="mt-12 text-center text-slate-400 text-sm pb-8">
+                            &copy; 2024 Tadika Pintar System. All rights reserved.
+                        </footer>
+
+                    </main>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
